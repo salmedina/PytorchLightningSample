@@ -1,0 +1,10 @@
+method: grid
+name: sample-sweep
+metric:
+  goal: maximize
+  name: val_acc
+parameters:
+  model.batch_size:
+    values: [32]
+  training.lr:
+    values: [1e-1, 1e-2, 1e-3, 1e-4]
