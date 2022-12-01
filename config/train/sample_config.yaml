@@ -1,0 +1,4 @@
+wandb:
+  entity: epic-games-ml-team-1
+  project: w2vc_riglogic
+  group: pl-tutorial

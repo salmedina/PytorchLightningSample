@@ -9,7 +9,7 @@ from torchmetrics import Accuracy
 from models import ResNet
 from easydict import EasyDict as edict
 from ruamel.yaml import YAML
-from pathlib import Path
+from rich.pretty import pprint
 
 
 class MNISTDataModule(pl.LightningDataModule):
@@ -97,9 +97,20 @@ class ImageClassifier(pl.LightningModule):
         pass
 
 
-def load_sweep_config(config_path):
+def load_config(path):
     yaml = YAML(typ='safe')
-    return yaml.load(open(config_path))
+    return yaml.load(open(path))
+
+
+def inject_sweep_to_config(sweep_config, config, separator='.'):
+    for key, value in sweep_config.items():
+        key_tokens = key.split(separator)
+        pin = config
+        for key_level in range(len(key_tokens) - 1):
+            pin = pin[key_tokens[key_level]]
+        prev_value = pin[key_tokens[-1]]
+        pin[key_tokens[-1]] = value
+        print(f'Updated {key}: {prev_value} -> {value}')
 
 
 def train_and_test():
@@ -128,53 +139,55 @@ def train_and_test():
     trainer.test(img_clf, mnist_data)
 
 
-def set_value(tgt_dict, path, value, separator='.'):
-    keys = path.split(separator)
-    pin = tgt_dict
-    for idx in range(len(keys)-1):
-        pin = pin[keys[idx]]
-    pin[keys[-1]] = value
-
-
-def sweep_hyperparams():
+def sweep_hyperparams_iter():
     # Helper function for sweeps
-    def sweep_iteration():
-        wandb.init(project='w2vc_riglogic',
-                   entity='epic-games-ml-team-1',
-                   group='pl-tutorial',)
-        wandb_logger = WandbLogger(config=wandb.config)
-        
-        mnist_data = MNISTDataModule(batch_size=wandb.config.batch_size)
-        img_clf = ImageClassifier(wandb.config)
+    wandb.init(group=wandb.config.group)
+    
+    wandb_logger = WandbLogger(config=wandb.config)
 
-        trainer = pl.Trainer(logger=wandb_logger,
-                             accelerator='gpu', devices=1,
-                             max_epochs=5)
-        trainer.fit(img_clf, mnist_data)
-        
-    sweep_config = {
-        'method': 'grid',
-        'name': 'grid-sweep',
-        'metric': {
-            'goal': 'maximize',
-            'name': 'val_acc'
-        },
-        'parameters': {
-            'batch_size': {
-                'values': [32],
-            },
-            'lr': {
-                'values': [1e-1, 1e-2, 1e-3, 1e-4]
-            }
-        }
-    }
+    mnist_data = MNISTDataModule(batch_size=wandb.config.batch_size)
+    img_clf = ImageClassifier(wandb.config)
 
+    trainer = pl.Trainer(logger=wandb_logger,
+                         accelerator='gpu', devices=1,
+                         max_epochs=5)
+    trainer.fit(img_clf, mnist_data)
+
+
+def sweep_hyperparams(config):
+        
+    sweep_config = load_config('config\sweeps\sample.yaml')
+    sweep_id = wandb.sweep(sweep_config,
+                           entity=config.wandb.entity,
+                           project=config.wandb.entity)
+
+    wandb.agent(sweep_id, function=sweep_hyperparams_iter)
+
+
+def sweep_print_iter():
+    wandb.init(group=wandb.config.group)
+    
+    sweep_config = load_config('config/sweeps/sample.yaml')
     sweep_id = wandb.sweep(sweep_config,
                            entity='epic-games-ml-team-1',
                            project='w2vc_riglogic')
 
-    wandb.agent(sweep_id, function=sweep_iteration)
+    pprint(wandb.config)
+
+
+def sweep_print(config):
+    sweep_config = load_config('config/sweeps/sample.yaml')
+    sweep_id = wandb.sweep(sweep_config,
+                           entity=config.wandb.entity,
+                           project=config.wandb.project)
+
+    wandb.agent(sweep_id, function=sweep_print_iter)
+
 
 if __name__ == '__main__':
-    # train_and_test()
-    sweep_hyperparams()
+    config_path = 'config/train/sample_config.yaml'
+    config = load_config(config_path)
+
+    # train_and_test(config)
+    # sweep_hyperparams(config)
+    sweep_print(config)
