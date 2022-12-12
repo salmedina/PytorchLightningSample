@@ -161,7 +161,12 @@ def sweep_hyperparams(sweep_config, config):
 
         inject_sweep_to_config(wandb.config, config, separator='.')
 
-        wandb_logger = WandbLogger(config=config)
+        pprint(config)
+
+        wandb_logger = WandbLogger(project=config.wandb.project,
+                                   entity=config.wandb.entity,
+                                   group=config.wandb.group,
+                                   config=config)
 
         mnist_data = MNISTDataModule(config)
         img_clf = ImageClassifier(config)
