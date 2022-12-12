@@ -1,0 +1,11 @@
+wandb:
+  project: w2vc_riglogic
+  entity: epic-games-ml-team-1
+  group: pl-tutorial
+data:
+  dir: './path'
+  num_workers: 4
+  batch_size: 32
+training:
+  num_epochs: 1
+  lr: 1e-2

@@ -1,5 +1,4 @@
 import pytorch_lightning as pl
-import torch
 import wandb
 from pytorch_lightning.loggers import WandbLogger
 from torch import nn, optim
@@ -13,33 +12,44 @@ from rich.pretty import pprint
 
 
 class MNISTDataModule(pl.LightningDataModule):
-    def __init__(self, data_dir='./data', batch_size=32):
+    def __init__(self, config):
         super().__init__()
-        self.data_dir = data_dir
-        self.batch_size = batch_size
+        self.data_dir = config.data.dir
+        self.batch_size = config.data.batch_size
         self.transform = transforms.ToTensor()
-    
+
+        self.config = config
+
     def prepare_data(self):
         datasets.MNIST(self.data_dir, train=True, download=True)
         datasets.MNIST(self.data_dir, train=False, download=True)
-        
+
     def setup(self, stage=None):
         if stage == 'fit' or stage is None:
-            self.train_set = datasets.MNIST(self.data_dir, train=True, download=False, transform=self.transform)
-            self.train_data, self.val_data = random_split(self.train_set, [55000, 5000])
+            self.train_set = datasets.MNIST(
+                self.data_dir, train=True, download=False, transform=self.transform)
+            self.train_data, self.val_data = random_split(
+                self.train_set, [55000, 5000])
         if stage == 'test' or stage is None:
-            self.test_data = datasets.MNIST(self.data_dir, train=False, download=False, transform=self.transform)
+            self.test_data = datasets.MNIST(
+                self.data_dir, train=False, download=False, transform=self.transform)
 
     def train_dataloader(self):
-        train_loader = DataLoader(self.train_data, batch_size=self.batch_size, num_workers=12)
+        train_loader = DataLoader(self.train_data,
+                                  batch_size=self.batch_size,
+                                  num_workers=self.config.data.num_workers)
         return train_loader
-    
+
     def val_dataloader(self):
-        val_loader = DataLoader(self.val_data, batch_size=self.batch_size, num_workers=12)
+        val_loader = DataLoader(self.val_data,
+                                batch_size=self.batch_size,
+                                num_workers=self.config.data.num_workers)
         return val_loader
-    
+
     def test_dataloader(self):
-        test_loader = DataLoader(self.test_data, batch_size=self.batch_size, num_workers=12)
+        test_loader = DataLoader(self.test_data,
+                                 batch_size=self.batch_size,
+                                 num_workers=self.config.data.num_workers)
         return test_loader
 
 
@@ -48,17 +58,17 @@ class ImageClassifier(pl.LightningModule):
         super().__init__()
         self.model = ResNet()
         self.criterion = nn.CrossEntropyLoss()
-        self.accuracy_metric = Accuracy()
+        self.accuracy_metric = Accuracy(task='multiclass', num_classes=10)
 
         self.config = config
-    
+
     def forward(self, x):
         return self.model(x)
 
     def configure_optimizers(self):
-        optimizer = optim.SGD(self.model.parameters(), lr=self.config.lr)
+        optimizer = optim.SGD(self.model.parameters(), lr=self.config.training.lr)
         return optimizer
-    
+
     def training_step(self, batch, batch_idx):
         x, y = batch
         b = x.size(0)
@@ -67,10 +77,11 @@ class ImageClassifier(pl.LightningModule):
         logits = self.model(x)
         loss = self.criterion(logits, y)
 
-        self.log('train_loss', loss, prog_bar=True, on_step=True, on_epoch=True)
+        self.log('train_loss', loss, prog_bar=True,
+                 on_step=True, on_epoch=True)
 
         return {'loss': loss}
-    
+
     def validation_step(self, batch, batch_idx):
         x, y = batch
         b = x.size(0)
@@ -88,10 +99,10 @@ class ImageClassifier(pl.LightningModule):
 
     def training_epoch_end(self, outs):
         self.log('val_acc_epoch', self.accuracy_metric.compute())
-    
+
     def test_step(self, batch, batch_idx):
         return self.validation_step(batch, batch_idx)
-    
+
     def on_validation_epoch_end(self) -> None:
         # Need last error value and save_path from config
         pass
@@ -113,25 +124,26 @@ def inject_sweep_to_config(sweep_config, config, separator='.'):
         print(f'Updated {key}: {prev_value} -> {value}')
 
 
-def train_and_test():
-    config = edict(lr=1e-1, batch_size=32)
-    wandb.init(wandb.init(project='w2vc_riglogic',
-                          entity='epic-games-ml-team-1',
-                          group='pl-tutorial',))
-    wandb_logger = WandbLogger(project='w2vc_riglogic',
-                               entity='epic-games-ml-team-1',
-                               group='pl-tutorial',
+def train_and_test(config):
+    wandb.init(project=config.wandb.project,
+               entity=config.wandb.entity,
+               group=config.wandb.group,
+               config=config)
+
+    wandb_logger = WandbLogger(project=config.wandb.project,
+                               entity=config.wandb.entity,
+                               group=config.wandb.group,
                                config=config)
 
-    mnist_data = MNISTDataModule(batch_size=config.batch_size)
-    img_clf = ImageClassifier(config=config)
-    
-    trainer = pl.Trainer(max_epochs=10,
+    mnist_data = MNISTDataModule(config)
+    img_clf = ImageClassifier(config)
+
+    trainer = pl.Trainer(max_epochs=config.training.num_epochs,
                          accelerator='gpu', devices=1,
                          logger=wandb_logger,
                          enable_progress_bar=True,
                          enable_checkpointing=False)
-    
+
     # Train
     trainer.fit(img_clf, mnist_data)
 
@@ -139,55 +151,41 @@ def train_and_test():
     trainer.test(img_clf, mnist_data)
 
 
-def sweep_hyperparams_iter():
-    # Helper function for sweeps
-    wandb.init(group=wandb.config.group)
-    
-    wandb_logger = WandbLogger(config=wandb.config)
+def sweep_hyperparams(sweep_config, config):
+    '''Sweep hyperparameters'''
 
-    mnist_data = MNISTDataModule(batch_size=wandb.config.batch_size)
-    img_clf = ImageClassifier(wandb.config)
+    def sweep_hyperparams_iter():
+        '''Helper function to iterate over sweep hyperparameters'''
 
-    trainer = pl.Trainer(logger=wandb_logger,
-                         accelerator='gpu', devices=1,
-                         max_epochs=5)
-    trainer.fit(img_clf, mnist_data)
+        wandb.init(group=config.wandb.group)
 
+        inject_sweep_to_config(wandb.config, config, separator='.')
 
-def sweep_hyperparams(config):
-        
-    sweep_config = load_config('config\sweeps\sample.yaml')
+        wandb_logger = WandbLogger(config=config)
+
+        mnist_data = MNISTDataModule(config)
+        img_clf = ImageClassifier(config)
+
+        trainer = pl.Trainer(logger=wandb_logger,
+                             accelerator='gpu', devices=1,
+                             max_epochs=config.training.num_epochs)
+        trainer.fit(img_clf, mnist_data)
+
+    # Start of Sweep
+    wandb.login()
     sweep_id = wandb.sweep(sweep_config,
-                           entity=config.wandb.entity,
-                           project=config.wandb.entity)
+                           project=config.wandb.project,
+                           entity=config.wandb.entity)
 
     wandb.agent(sweep_id, function=sweep_hyperparams_iter)
 
 
-def sweep_print_iter():
-    wandb.init(group=wandb.config.group)
-    
-    sweep_config = load_config('config/sweeps/sample.yaml')
-    sweep_id = wandb.sweep(sweep_config,
-                           entity='epic-games-ml-team-1',
-                           project='w2vc_riglogic')
-
-    pprint(wandb.config)
-
-
-def sweep_print(config):
-    sweep_config = load_config('config/sweeps/sample.yaml')
-    sweep_id = wandb.sweep(sweep_config,
-                           entity=config.wandb.entity,
-                           project=config.wandb.project)
-
-    wandb.agent(sweep_id, function=sweep_print_iter)
-
-
 if __name__ == '__main__':
-    config_path = 'config/train/sample_config.yaml'
-    config = load_config(config_path)
+    sweep_config_path = 'config/sweeps/sample.yaml'
+    sweep_config = load_config(sweep_config_path)
 
-    # train_and_test(config)
-    # sweep_hyperparams(config)
-    sweep_print(config)
+    base_config_path = 'config/train/base.yaml'
+    base_config = edict(load_config(base_config_path))
+
+    sweep_hyperparams(sweep_config, base_config)
+    # train_and_test(base_config)
