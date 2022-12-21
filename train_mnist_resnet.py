@@ -157,24 +157,23 @@ def sweep_hyperparams(sweep_config, config):
     def sweep_hyperparams_iter():
         '''Helper function to iterate over sweep hyperparameters'''
 
-        wandb.init(group=config.wandb.group)
+        with wandb.init(group=config.wandb.group):
+            inject_sweep_to_config(wandb.config, config, separator='.')
 
-        inject_sweep_to_config(wandb.config, config, separator='.')
+            pprint(config)
 
-        pprint(config)
+            wandb_logger = WandbLogger(project=config.wandb.project,
+                                       entity=config.wandb.entity,
+                                       group=config.wandb.group,
+                                       config=config)
 
-        wandb_logger = WandbLogger(project=config.wandb.project,
-                                   entity=config.wandb.entity,
-                                   group=config.wandb.group,
-                                   config=config)
+            mnist_data = MNISTDataModule(config)
+            img_clf = ImageClassifier(config)
 
-        mnist_data = MNISTDataModule(config)
-        img_clf = ImageClassifier(config)
-
-        trainer = pl.Trainer(logger=wandb_logger,
-                             accelerator='gpu', devices=1,
-                             max_epochs=config.training.num_epochs)
-        trainer.fit(img_clf, mnist_data)
+            trainer = pl.Trainer(logger=wandb_logger,
+                                 accelerator='gpu', devices=1,
+                                 max_epochs=config.training.num_epochs)
+            trainer.fit(img_clf, mnist_data)
 
     # Start of Sweep
     wandb.login()
